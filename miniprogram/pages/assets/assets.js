@@ -32,6 +32,7 @@ function askTitle(title, placeholder) {
 
 Page({
   data: {
+    viewMode: "home",
     tabs: TABS,
     tabIndex: 0,
     isDigital: false,
@@ -55,7 +56,30 @@ Page({
   },
 
   onLoad(options) {
-    this.applyWantedTab((options && options.tab) || "");
+    const opened = this.applyWantedTab((options && options.tab) || "");
+    if (opened) this.setData({ viewMode: "list" });
+  },
+
+  goEntry(e) {
+    const key = String(e.currentTarget.dataset.key || "");
+    if (key === "ip") {
+      wx.navigateTo({ url: "/pages/ip-profile/ip-profile" });
+      return;
+    }
+    if (key === "digital") {
+      wx.navigateTo({ url: "/pages/digital/digital" });
+      return;
+    }
+    if (key === "image" || key === "video") {
+      const index = key === "image" ? 0 : 1;
+      this.setData({ viewMode: "list", tabIndex: index, isDigital: false, tabCount: 0, currentCount: 0 });
+      this.loadUploads();
+      return;
+    }
+  },
+
+  backHome() {
+    this.setData({ viewMode: "home", keyword: "" });
   },
 
   applyWantedTab(raw) {
@@ -74,13 +98,18 @@ Page({
     const wanted = wx.getStorageSync("lobster_assets_tab");
     if (wanted) {
       wx.removeStorageSync("lobster_assets_tab");
-      this.applyWantedTab(wanted);
+      if (this.applyWantedTab(wanted)) this.setData({ viewMode: "list" });
     }
+    if (this.data.viewMode !== "list") return;
     this.loadUploads();
     if (this.data.isDigital) this.loadDigital();
   },
 
   onPullDownRefresh() {
+    if (this.data.viewMode !== "list") {
+      wx.stopPullDownRefresh();
+      return;
+    }
     const job = this.data.isDigital ? this.loadDigital() : this.loadUploads();
     job.then(() => wx.stopPullDownRefresh()).catch(() => wx.stopPullDownRefresh());
   },

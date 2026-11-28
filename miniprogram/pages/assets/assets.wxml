@@ -1,9 +1,48 @@
 <view class="page">
+  <block wx:if="{{viewMode === 'home'}}">
+    <view class="head">
+      <text class="title">素材库</text>
+      <text class="sub">IP人设 · 数字人声音 · 图片 · 视频</text>
+    </view>
+    <view class="entry-grid">
+      <view class="entry-card ip" data-key="ip" bindtap="goEntry" hover-class="entry-press">
+        <text class="entry-ico">IP</text>
+        <view class="entry-body">
+          <text class="entry-title">IP人设</text>
+          <text class="entry-sub">手动填写个人IP档案</text>
+        </view>
+      </view>
+      <view class="entry-card digital" data-key="digital" bindtap="goEntry" hover-class="entry-press">
+        <text class="entry-ico">AI</text>
+        <view class="entry-body">
+          <text class="entry-title">数字人声音分身</text>
+          <text class="entry-sub">形象训练 · 声音克隆</text>
+        </view>
+      </view>
+      <view class="entry-card image" data-key="image" bindtap="goEntry" hover-class="entry-press">
+        <text class="entry-ico">IMG</text>
+        <view class="entry-body">
+          <text class="entry-title">图片</text>
+          <text class="entry-sub">上传的图片素材</text>
+        </view>
+      </view>
+      <view class="entry-card video" data-key="video" bindtap="goEntry" hover-class="entry-press">
+        <text class="entry-ico">VID</text>
+        <view class="entry-body">
+          <text class="entry-title">视频</text>
+          <text class="entry-sub">上传的视频素材</text>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <block wx:else>
   <view class="head">
     <view class="head-row">
-      <view>
-        <text class="title">素材与分身</text>
-        <text class="sub">{{tabs[tabIndex]}} · {{tabCount}} 个</text>
+      <view class="head-copy">
+        <text class="back" bindtap="backHome">‹ 素材库</text>
+        <text class="title">{{tabs[tabIndex]}}</text>
+        <text class="sub">{{tabCount}} 个</text>
       </view>
       <button class="primary small" bindtap="upload">{{isDigital ? '新建' : '上传'}}</button>
     </view>
@@ -75,4 +114,5 @@
     <video wx:if="{{previewType === 'video'}}" class="asset-preview-body" src="{{previewUrl}}" controls autoplay object-fit="contain"></video>
     <image wx:else class="asset-preview-body" src="{{previewUrl}}" mode="aspectFit" />
   </view>
+</block>
 </view>
