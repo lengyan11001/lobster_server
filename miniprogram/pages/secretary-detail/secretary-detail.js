@@ -280,7 +280,10 @@ Page({
         this.setData({ extractOpen: false });
         const filled = (data && data.profile_fields) || [];
         const created = (data && data.memory_docs) || [];
-        wx.showModal({ title: "已写入", content: `资料 ${filled.length} 项，记忆 ${created.length} 份`, showCancel: false });
+        wx.showToast({ title: `已保存：资料 ${filled.length} 项 · 记忆 ${created.length} 份`, icon: "none" });
+        setTimeout(() => {
+          wx.navigateTo({ url: "/pages/ip-profile/ip-profile" });
+        }, 900);
       })
       .catch((err) => { wx.hideLoading(); wx.showToast({ title: api.errorMessage(err), icon: "none" }); });
   },
