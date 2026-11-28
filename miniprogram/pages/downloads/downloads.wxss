@@ -74,15 +74,15 @@ page { background: #f8f9fa; color: #0f172a; }
 .card-body { position: relative; z-index: 2; display: flex; }
 
 .thumb { position: relative; width: 168rpx; height: 224rpx; flex: none; border-radius: 16rpx; overflow: hidden; background: #ffffff; }
-.thumb-img { width: 100%; height: 100%; }
-.thumb-empty { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #0f172a; font-size: 24rpx; font-weight: 600; }
+.thumb-img { position: absolute; left: 0; top: 0; z-index: 1; width: 100%; height: 100%; }
+.thumb-empty { position: absolute; left: 0; top: 0; z-index: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #0f172a; font-size: 24rpx; font-weight: 600; }
 .thumb-empty.kind-video { background: #f8f9fa; }
 .thumb-empty.kind-image { background: #f8f9fa; }
 .thumb-empty.kind-article, .thumb-empty.kind-wechat_article { background: #f8f9fa; }
 .thumb-empty.kind-ppt { background: #f8f9fa; }
 .thumb-empty.kind-audio { background: #f8f9fa; }
 .play {
-  position: absolute; left: 50%; top: 50%; width: 56rpx; height: 56rpx; margin: -28rpx 0 0 -28rpx;
+  position: absolute; left: 50%; top: 50%; z-index: 2; width: 56rpx; height: 56rpx; margin: -28rpx 0 0 -28rpx;
   border-radius: 50%; background: rgba(15,23,42,0.08); border: 1rpx solid #eef1f6;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 0 14rpx rgba(25,87,232,0.7);

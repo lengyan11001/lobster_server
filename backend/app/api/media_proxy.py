@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 import os
@@ -28,6 +29,7 @@ router = APIRouter()
 _CACHE_DIR = Path(os.environ.get("MEDIA_THUMB_DIR") or "/opt/lobster-server/backups/media_thumbs")
 _ALLOWED_SUFFIX = (".volces.com", ".aliyuncs.com", ".myqcloud.com", "bhzn.top", ".51sux.com", ".cos.ap-")
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
+_TRANSPARENT_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
 
 
 def _check_url(url: str) -> str:
@@ -140,8 +142,7 @@ def _thumb_from_image(src: str) -> FileResponse:
     return FileResponse(out, media_type="image/png" if suffix == ".png" else "image/jpeg")
 
 
-@router.get("/api/media/thumb", summary="视频首帧/图片缩略图（服务器代理，规避 Referer 拦截）")
-def media_thumb(url: str = Query(...)):
+def _media_thumb_impl(url: str):
     src = _check_url(url)
     jpg = _cache_path(src, ".jpg")
     png = _cache_path(src, ".png")
@@ -181,6 +182,14 @@ def media_thumb(url: str = Query(...)):
         except HTTPException:
             return _thumb_from_image(src)
 
+
+@router.get("/api/media/thumb", summary="视频首帧/图片缩略图（服务器代理，规避 Referer 拦截）")
+def media_thumb(url: str = Query(...)):
+    try:
+        return _media_thumb_impl(url)
+    except HTTPException as exc:
+        logger.info("[media-thumb] fallback url=%s status=%s detail=%s", str(url or "")[:120], exc.status_code, str(exc.detail or "")[:160])
+        return Response(content=_TRANSPARENT_PNG, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 @router.head("/api/media/proxy", summary="媒体流代理 HEAD（播放器探测用）")
 def media_proxy_head(url: str = Query(...)):

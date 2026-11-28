@@ -696,3 +696,39 @@ def test_running_content_record_hidden_from_completed_list(db_session, test_user
 
     inflight = list_inflight_content_records(kind="article", limit=20, current_user=test_user, db=db_session)
     assert any(item["source_id"] == "article-running-1" for item in inflight["items"])
+
+def test_stale_running_record_is_soft_deleted(db_session, test_user):
+    from datetime import timedelta
+
+    old = datetime.utcnow() - timedelta(minutes=30)
+    fresh = datetime.utcnow()
+    db_session.add(UserContentRecord(
+        user_id=test_user.id,
+        source="ip_moments",
+        source_id="moments-stale-1",
+        kind="article",
+        title="过期生成中",
+        status="running",
+        source_created_at=old,
+        created_at=old,
+        updated_at=old,
+    ))
+    db_session.add(UserContentRecord(
+        user_id=test_user.id,
+        source="ip_moments",
+        source_id="moments-fresh-1",
+        kind="article",
+        title="新生成中",
+        status="running",
+        source_created_at=fresh,
+        created_at=fresh,
+        updated_at=fresh,
+    ))
+    db_session.commit()
+
+    result = list_inflight_content_records(kind="article", limit=20, current_user=test_user, db=db_session)
+    ids = {item["source_id"] for item in result["items"]}
+    assert "moments-fresh-1" in ids
+    assert "moments-stale-1" not in ids
+    stale = db_session.query(UserContentRecord).filter_by(source_id="moments-stale-1").one()
+    assert stale.status == "deleted"

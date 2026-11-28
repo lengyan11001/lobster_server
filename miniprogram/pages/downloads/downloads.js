@@ -269,6 +269,13 @@ Page({
     };
   },
 
+  onThumbError(e) {
+    const index = Number((e.currentTarget.dataset && e.currentTarget.dataset.index) || 0);
+    const items = this.data.items.slice();
+    if (!items[index]) return;
+    items[index] = Object.assign({}, items[index], { thumb: "" });
+    this.setData({ items });
+  },
   openDetail(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
     const row = this.data.items[index];

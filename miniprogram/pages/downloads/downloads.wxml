@@ -49,8 +49,8 @@
       <view wx:for="{{items}}" wx:key="key" class="work-card" data-index="{{index}}" bindtap="openDetail" hover-class="press">
         <view class="card-body">
           <view class="thumb">
-            <image wx:if="{{item.thumb}}" class="thumb-img" src="{{item.thumb}}" mode="aspectFill" />
-            <view wx:else class="thumb-empty kind-{{item.kind}}">{{item.pending ? '生成中' : item.kindLabel}}</view>
+            <view class="thumb-empty kind-{{item.kind}}">{{item.pending ? '生成中' : item.kindLabel}}</view>
+            <image wx:if="{{item.thumb}}" class="thumb-img" src="{{item.thumb}}" mode="aspectFill" binderror="onThumbError" data-index="{{index}}" />
             <view wx:if="{{item.isVideo && !item.pending}}" class="play"><image class="play-ic" src="/assets/icons/ic-play.png" /></view>
           </view>
           <view class="card-main">

@@ -222,7 +222,7 @@ def _collect_inflight(db: Session, owner: User, *, limit: int) -> list[dict[str,
         )
 
     # 公众号：客户端同步进来的进行中文章（source 可自定义，kind=article/wechat_article）
-    cutoff = datetime.utcnow() - timedelta(hours=2)
+    cutoff = datetime.utcnow() - timedelta(minutes=15)
     rows = (
         db.query(UserContentRecord)
         .filter(
@@ -765,6 +765,25 @@ def sync_content_records(
     return {"ok": True, "created": created, "updated": updated, "items": [_synced_payload(row) for row in rows]}
 
 
+def _expire_stale_inflight_records(db: Session, user_id: int) -> None:
+    """把超过 15 分钟还在 running 的临时记录软删除，避免作品页一直显示生成中。"""
+    cutoff = datetime.utcnow() - timedelta(minutes=15)
+    rows = (
+        db.query(UserContentRecord)
+        .filter(
+            UserContentRecord.user_id == int(user_id),
+            func.lower(UserContentRecord.status).in_(("running", "queued", "processing", "pending")),
+            UserContentRecord.source_created_at < cutoff,
+        )
+        .all()
+    )
+    if not rows:
+        return
+    for row in rows:
+        row.status = "deleted"
+    db.commit()
+
+
 @router.get("/api/content-records/inflight", summary="List queued/running content tasks")
 def list_inflight_content_records(
     kind: str = Query("", max_length=32),
@@ -773,6 +792,7 @@ def list_inflight_content_records(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     owner = online_user_for_mobile_user(db, current_user)
+    _expire_stale_inflight_records(db, int(owner.id))
     normalized_kind = _clean_text(kind, 32).lower()
     if normalized_kind and normalized_kind not in _CONTENT_KINDS and normalized_kind not in {"all"}:
         raise HTTPException(status_code=400, detail="内容类型无效")
