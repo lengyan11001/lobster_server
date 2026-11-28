@@ -1117,6 +1117,18 @@ Page({
     this.fetchPage(this.data.page + 1);
   },
 
+  goTopicFor(e) {
+    const id = Number(e.currentTarget.dataset.id || 0) || 0;
+    if (!id) return;
+    wx.navigateTo({ url: "/pages/topic-recommend/topic-recommend?record_id=" + id });
+  },
+
+  goIpRecognizeFor(e) {
+    const id = Number(e.currentTarget.dataset.id || 0) || 0;
+    if (!id) return;
+    wx.navigateTo({ url: "/pages/ip-recognize/ip-recognize?record_id=" + id });
+  },
+
   openRow(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
     const row = this.data.listRows[index];

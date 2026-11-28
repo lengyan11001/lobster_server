@@ -71,9 +71,21 @@ Page({
     currentTemplateId: 0
   },
 
+  onLoad(query) {
+    const rid = Number((query && query.record_id) || 0) || 0;
+    this._pendingRecordId = rid;
+  },
+
   onShow() {
     app.restoreSession();
-    this.loadSaved().then(() => this.resumePendingJob());
+    this.loadSaved().then(() => {
+      this.resumePendingJob();
+      const rid = Number(this._pendingRecordId || 0) || 0;
+      if (rid) {
+        this._pendingRecordId = 0;
+        if (!this.data.analyzing) this.startAnalyze({ record_id: rid });
+      }
+    });
     if (this.data.activeTab === "templates") this.loadTemplates();
   },
 

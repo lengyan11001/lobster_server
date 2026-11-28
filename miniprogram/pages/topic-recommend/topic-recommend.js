@@ -37,12 +37,19 @@ Page({
   onLoad(query) {
     app.restoreSession();
     this.target = String((query && query.target) || "");
+    const recordId = Number((query && query.record_id) || 0) || 0;
+    this.recordId = recordId;
     this.setData({ target: this.target });
     this.topicPoller = null;
     this.topicActive = null;
     this.latestPlan = null;
     this.loadJobs();
     this.loadLatest();
+    if (recordId) {
+      setTimeout(() => {
+        if (!this.data.running) this.start();
+      }, 400);
+    }
   },
 
   onShow() {
