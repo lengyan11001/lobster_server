@@ -55,7 +55,7 @@
           <text class="hint">{{videoName}}</text>
         </view>
       </view>
-      <text class="or">或粘贴抖音 / 视频号分享文案</text>
+      <text class="or">或粘贴作品链接分享文案</text>
       <textarea class="textarea" value="{{shareText}}" bindinput="onShareInput" placeholder="粘贴包含链接的完整分享文案" maxlength="1000" auto-height />
       <button class="ghost" loading="{{resolving}}" bindtap="resolveShare">解析链接</button>
       <text wx:if="{{shareStatus}}" class="hint">{{shareStatus}}</text>

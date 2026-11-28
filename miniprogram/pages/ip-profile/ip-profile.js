@@ -697,7 +697,7 @@ Page({
       if (u) bits.push("username：" + u);
     } else {
       const uid = String(raw.unique_id || "").trim();
-      if (uid) bits.push("抖音号：" + uid);
+      if (uid) bits.push("账号ID：" + uid);
     }
     if (raw.follower_count) bits.push("粉丝：" + raw.follower_count);
     if (raw.aweme_count) bits.push("作品：" + raw.aweme_count);

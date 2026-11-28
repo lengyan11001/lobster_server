@@ -185,7 +185,7 @@ Page({
         return String(v);
       };
       const liveText = row.source === "douyin_search"
-        ? ("抖音实测 · 抓真实搜索结果 " + (row.samples || 0) + " 条")
+        ? ("搜索实测 · 抓真实搜索结果 " + (row.samples || 0) + " 条")
         : "";
       const verdictClass = row.verdict === "值得做" ? "good" : (row.verdict === "竞争过重" ? "bad" : (row.verdict === "能打，靠差异化" ? "mid" : "none"));
       const top = Array.isArray(row.topTitles) && row.topTitles.length ? row.topTitles[0] : null;
@@ -322,7 +322,7 @@ Page({
       .then((data) => {
         const metrics = (data && data.metrics) || [];
         if (!(data && data.enabled)) {
-          this.setData({ metricsLoading: false, metricsNote: String((data && data.note) || "抖音数据未启用") });
+          this.setData({ metricsLoading: false, metricsNote: String((data && data.note) || "搜索数据未启用") });
           return;
         }
         const byWord = {};
@@ -348,10 +348,10 @@ Page({
         });
         const keywords = this.normalizeKeywords(merged);
         this.setData({ keywords, metricsLoading: false, metricsNote: String((data && data.note) || "") });
-        wx.showToast({ title: "已用抖音数据校正", icon: "success" });
+        wx.showToast({ title: "已用搜索数据校正", icon: "success" });
       })
       .catch((err) => {
-        this.setData({ metricsLoading: false, metricsNote: api.errorMessage(err) || "抖音数据校验失败" });
+        this.setData({ metricsLoading: false, metricsNote: api.errorMessage(err) || "数据校验失败" });
       });
   },
 

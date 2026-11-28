@@ -112,11 +112,11 @@
         <text class="sheet-close" catchtap="closeCompetitorModal">×</text>
       </view>
       <view class="comp-platform">
-        <view class="comp-tab {{compPlatform === 'douyin' ? 'on' : ''}}" data-p="douyin" bindtap="setCompPlatform">抖音</view>
-        <view class="comp-tab {{compPlatform === 'wechat_channels' ? 'on' : ''}}" data-p="wechat_channels" bindtap="setCompPlatform">视频号</view>
+        <view class="comp-tab {{compPlatform === 'douyin' ? 'on' : ''}}" data-p="douyin" bindtap="setCompPlatform">平台1</view>
+        <view class="comp-tab {{compPlatform === 'wechat_channels' ? 'on' : ''}}" data-p="wechat_channels" bindtap="setCompPlatform">平台2</view>
       </view>
-      <text class="label">{{compPlatform === 'wechat_channels' ? '昵称、username、sph ID 或作品链接' : '昵称或抖音号'}}</text>
-      <input class="input" value="{{compKeyword}}" bindinput="onCompKeyword" placeholder="{{compPlatform === 'wechat_channels' ? '输入视频号昵称、username、sph ID 或作品链接' : '输入昵称或抖音号'}}" maxlength="200" />
+      <text class="label">{{compPlatform === 'wechat_channels' ? '昵称、用户名、ID 或作品链接' : '昵称或账号ID'}}</text>
+      <input class="input" value="{{compKeyword}}" bindinput="onCompKeyword" placeholder="{{compPlatform === 'wechat_channels' ? '输入昵称、用户名、ID 或作品链接' : '输入昵称或账号ID'}}" maxlength="200" />
       <text class="label">行业标签（可选）</text>
       <input class="input" value="{{compTags}}" bindinput="onCompTags" placeholder="例如：餐饮,本地生活" maxlength="60" />
       <view class="comp-actions">

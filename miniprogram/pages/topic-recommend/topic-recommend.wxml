@@ -37,7 +37,7 @@
   <block wx:if="{{viewMode === 'result'}}">
   <view class="panel">
     <view class="panel-acts">
-      <view class="btn ghost {{metricsLoading ? 'busy' : ''}}" bindtap="checkDouyin">{{metricsLoading ? '校验中…' : '抖音竞品体检'}}</view>
+      <view class="btn ghost {{metricsLoading ? 'busy' : ''}}" bindtap="checkDouyin">{{metricsLoading ? '校验中…' : '竞品体检'}}</view>
     </view>
 
     <view wx:if="{{errorText}}" class="err">{{errorText}}</view>
