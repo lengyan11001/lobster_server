@@ -773,7 +773,11 @@ Page({
           alreadyNotified: true
         });
       })
-      .then(() => this.stopPipelineClaim())
+      .then(() => {
+        this.stopPipelineClaim();
+        wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
+        setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
+      })
       .catch((err) => {
         this.stopPipelineClaim();
         this.clearPendingTask();

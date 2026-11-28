@@ -354,7 +354,7 @@ Page({
     pickerItems: [],
     pickerLoading: false,
     extracting: false,
-    viewMode: "list",
+    viewMode: "create",
     jobList: []
   },
 
@@ -797,7 +797,7 @@ Page({
       created_at: Date.now()
     });
     this.imageSubmitLock = true;
-    this.setData({ submitting: true, progressText: "任务已提交", resultImages: [], viewMode: "list" });
+    this.setData({ submitting: true, progressText: "任务已提交", resultImages: [], viewMode: "create" });
     this.loadJobs();
     wx.setStorageSync("lobster_refresh_works", "1");
     wx.setStorageSync("lobster_open_media_tab", "image");
@@ -812,6 +812,8 @@ Page({
         if (!jobId) throw new Error("没有拿到任务号");
         hist.update(histId, { job_id: jobId, status_text: "排队中" });
         this.loadJobs();
+        wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
+        setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
         this.startImagePolling(histId, jobId);
       })
       .catch((err) => {
