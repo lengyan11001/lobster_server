@@ -162,7 +162,7 @@ Page({
     materials: [], assetTab: "image", assets: [], assetsAll: [], assetsLoading: false,
     assetKeyword: "",
     submitting: false, statusText: "", videoUrl: "", coverUrl: "", history: [],
-    viewMode: "list", jobList: [],
+    viewMode: "create", step: 1, jobList: [],
     previewOpen: false, previewUrl: "", previewTitle: "",
     pickerOpen: false, pickerItems: [], pickerLoading: false, extracting: false, extractStep: 0,
     dhTemplateName: "", dhTemplateDevice: "", dhTemplateStyleId: ""
@@ -209,7 +209,18 @@ Page({
   },
 
   openCreate() {
-    this.setData({ viewMode: "create", statusText: "", videoUrl: "", coverUrl: "" });
+    this.setData({ viewMode: "create", step: 1, statusText: "", videoUrl: "", coverUrl: "" });
+  },
+
+  nextStep() {
+    if (!String(this.data.text || '').trim()) return wx.showToast({ title: '请先填写口播文案', icon: 'none' });
+    this.setData({ step: 2 });
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
+  },
+
+  prevStep() {
+    this.setData({ step: 1 });
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
   },
 
   backToList() {
@@ -1463,9 +1474,11 @@ Page({
         const taskId = String((data && (data.task_id || (data.record && data.record.task_id))) || "").trim();
         if (!taskId) throw new Error("没有拿到任务号");
         this.rememberDigitalJob(taskId, this.lastTitle || "数字人口播");
-        this.setData({ statusText: "已提交，排队生成中…", submitting: false, viewMode: "list" });
+        this.setData({ statusText: "已提交，排队生成中…", submitting: false });
         this.loadJobs();
         this.startPolling(taskId);
+        wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
+        setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
       })
       .catch((err) => {
         this.setData({ statusText: "", submitting: false });

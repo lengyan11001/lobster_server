@@ -8,19 +8,15 @@ const TABS = [
   { key: "all", label: "全部" },
   { key: "video", label: "视频" },
   { key: "image", label: "图片" },
-  { key: "article", label: "文章" },
-  { key: "ppt", label: "PPT" },
-  { key: "audio", label: "音频" }
+  { key: "article", label: "文章" }
 ];
 
-const ALL_KEYS = ["video", "image", "article", "wechat_article", "ppt", "audio"];
+const ALL_KEYS = ["video", "image", "article", "wechat_article"];
 
 const KIND_KEYS = {
   video: ["video"],
   image: ["image"],
-  article: ["article", "wechat_article"],
-  ppt: ["ppt"],
-  audio: ["audio"]
+  article: ["article", "wechat_article"]
 };
 
 const KIND_LABEL = {
@@ -30,6 +26,15 @@ const KIND_LABEL = {
   wechat_article: "文章",
   ppt: "PPT",
   audio: "音频"
+};
+
+const CATEGORY_LABEL = {
+  shanjian_digital_human: "数字人",
+  montage: "混剪",
+  h5_workflow: "热门跟创",
+  canvas: "画布",
+  online_wechat_article: "公众号",
+  ip_daily: "朋友圈"
 };
 
 const PAGE_SIZE = 20;
@@ -163,6 +168,7 @@ Page({
       sourceId: String(source.source_id || source.id || ""),
       kind,
       kindLabel: KIND_LABEL[kind] || "内容",
+      categoryLabel: CATEGORY_LABEL[String(source.source || "")] || "",
       title: String(source.title || "未命名内容"),
       summary: String(source.summary || source.content || "").replace(/\s+/g, " ").slice(0, 90),
       time: fmtTime(source.created_at),

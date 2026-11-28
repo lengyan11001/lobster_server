@@ -37,6 +37,18 @@
     </view>
   </view>
 
+  <block wx:if="{{step === 1}}">
+  <view wx:if="{{viewMode === 'create'}}" class="panel">
+    <text class="label">口播文案</text>
+    <textarea class="textarea" value="{{speechText}}" bindinput="onSpeechInput" placeholder="输入口播文案，下一步再选音色、模板和素材" maxlength="1200" auto-height />
+    <view class="btn-row">
+      <button class="primary" bindtap="nextStep">下一步</button>
+    </view>
+    <text class="hint">下一步再设置音色、模板、素材分组等参数</text>
+  </view>
+  </block>
+
+  <block wx:if="{{step === 2}}">
   <view wx:if="{{viewMode === 'create'}}" class="panel">
     <text class="label">音色（素材库 · 我的声音）</text>
     <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
@@ -125,11 +137,15 @@
       <view class="mat-add" bindtap="openAssetPicker">库</view>
     </view>
 
-    <button class="primary" loading="{{rendering}}" disabled="{{rendering}}" bindtap="startLocalMontage">{{rendering ? '渲染中…' : '开始混剪'}}</button>
+    <view class="btn-row">
+      <button class="ghost half" bindtap="prevStep">上一步</button>
+      <button class="primary half" loading="{{rendering}}" disabled="{{rendering}}" bindtap="startLocalMontage">{{rendering ? '渲染中…' : '开始混剪'}}</button>
+    </view>
     <video wx:if="{{localVideoUrl}}" class="video" src="{{localVideoUrl}}" controls />
     <button wx:if="{{localVideoUrl}}" class="ghost" bindtap="saveLocalVideo">保存到相册</button>
     <text wx:if="{{localStatus}}" class="hint">{{localStatus}}</text>
   </view>
+  </block>
 
 </view>
 

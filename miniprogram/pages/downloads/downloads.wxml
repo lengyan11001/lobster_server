@@ -56,6 +56,7 @@
           <view class="card-main">
             <view class="card-top">
               <text class="chip kind-{{item.kind}}">{{item.kindLabel}}</text>
+              <text wx:if="{{item.categoryLabel}}" class="chip cat">{{item.categoryLabel}}</text>
               <text class="time">{{item.time}}</text>
             </view>
             <text class="card-title">{{item.title}}</text>

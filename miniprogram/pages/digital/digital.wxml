@@ -49,6 +49,18 @@
     <text class="dh-tpl-link">更换 ›</text>
   </view>
 
+  <block wx:if="{{step === 1}}">
+  <view class="panel">
+    <text class="label">口播文案</text>
+    <textarea class="textarea" value="{{text}}" bindinput="onTextInput" placeholder="输入这条视频要念的内容" auto-height maxlength="2000" />
+    <view class="btn-row">
+      <button class="primary" bindtap="nextStep">下一步</button>
+    </view>
+    <text class="hint">下一步再选数字人、声音、模板等参数</text>
+  </view>
+  </block>
+
+  <block wx:if="{{step === 2}}">
   <view class="panel">
     <text class="label">数字人</text>
     <view wx:if="{{profilesLoading}}" class="empty">加载数字人中…</view>
@@ -210,8 +222,12 @@
   </view>
 
   <view class="panel">
-    <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="generate">生成口播视频</button>
+    <view class="btn-row">
+      <button class="ghost" bindtap="prevStep">上一步</button>
+      <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="generate">生成口播视频</button>
+    </view>
   </view>
+  </block>
 
   <view wx:if="{{statusText}}" class="panel video-panel">
     <text class="label">任务状态</text>
