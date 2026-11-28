@@ -28,6 +28,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, H5AgentTemplateGrant, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User, UserContentRecord
+from .digital_human_records import upsert_failed_record
 from ..services.brand_context import brand_short_name, normalize_brand_mark, user_brand_mark
 from .assets import (
     _asset_hidden_from_library,
@@ -3294,6 +3295,8 @@ async def query_video_task(
 
         db.commit()
         db.refresh(row)
+        if str(row.status or '').lower() == 'failed':
+            upsert_failed_record(db, user_id=int(current_user.id), row=row)
         return {
             "ok": status != "failed",
             "status": status,
@@ -3356,6 +3359,8 @@ async def query_video_task(
             )
             db.commit()
             db.refresh(row)
+            if str(row.status or '').lower() == 'failed':
+                upsert_failed_record(db, user_id=int(current_user.id), row=row)
             logger.warning(
                 "[shanjian-dh] realman clip submit failed user_id=%s base_task=%s detail=%s",
                 getattr(current_user, "id", ""),
@@ -3421,6 +3426,8 @@ async def query_video_task(
 
     db.commit()
     db.refresh(row)
+    if str(row.status or '').lower() == 'failed':
+        upsert_failed_record(db, user_id=int(current_user.id), row=row)
     return {
         "ok": status != "failed",
         "status": status,
