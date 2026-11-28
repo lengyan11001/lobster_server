@@ -70,6 +70,7 @@ Page({
     loading: false,
     loadingMore: false,
     hasMore: true,
+    pendingCount: 0,
     phoneBound: false,
     detail: null
   },
@@ -176,7 +177,7 @@ Page({
           wx.showToast({ title: "加载失败，请稍后重试", icon: "none" });
           hasNext = false;
         }
-        this.setData({ items: merged, offset: offset + PAGE_SIZE, hasMore: hasNext });
+        this.setData({ items: merged, offset: offset + PAGE_SIZE, hasMore: hasNext, pendingCount: merged.filter((row) => row && row.pending).length });
       })
       .catch((err) => {
         wx.showToast({ title: api.errorMessage(err), icon: "none" });
@@ -218,7 +219,7 @@ Page({
         });
         const merged = Object.keys(byKey).map((key) => byKey[key]);
         merged.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-        this.setData({ items: merged });
+        this.setData({ items: merged, pendingCount: merged.filter((row) => row && row.pending).length });
         // 任务刚完成时 inflight 会消失，立即整页刷新把新生成的内容记录拉回来，
         // 避免作品卡片先消失、等用户手动刷新才出现。
         if (hadPending && !merged.some((row) => row && row.pending)) {
@@ -394,6 +395,39 @@ Page({
       });
   },
 
+  onSheetImageError(e) {
+    const url = String((e.currentTarget.dataset && e.currentTarget.dataset.url) || "");
+    const detail = this.data.detail;
+    if (!detail || !url) return;
+    this.setData({
+      detail: Object.assign({}, detail, {
+        images: (detail.images || []).filter((item) => item !== url),
+        rawImages: (detail.rawImages || []).filter((item) => mediaUrl(item, "thumb") !== url)
+      })
+    });
+  },
+
+  cleanupInflight() {
+    wx.showModal({
+      title: "清理生成中",
+      content: "会清掉当前账号所有生成中记录（包括朋友圈配图挂起），确定？",
+      success: (res) => {
+        if (!res.confirm) return;
+        wx.showLoading({ title: "清理中", mask: true });
+        app.request({ method: "POST", url: "/api/content-records/inflight/cleanup", timeout: 30000 })
+          .then((data) => {
+            wx.hideLoading();
+            const count = Number((data && data.cleared) || 0) + Number((data && data.cleared_drafts) || 0);
+            wx.showToast({ title: "已清理 " + count + " 条", icon: "success" });
+            this.refresh();
+          })
+          .catch((err) => {
+            wx.hideLoading();
+            wx.showToast({ title: api.errorMessage(err), icon: "none" });
+          });
+      }
+    });
+  },
   closeDetail() {
     this.setData({ detail: null });
   },

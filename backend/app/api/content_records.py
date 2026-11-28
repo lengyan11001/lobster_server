@@ -197,6 +197,7 @@ def _collect_inflight(db: Session, owner: User, *, limit: int) -> list[dict[str,
         .filter(
             IPContentDraftRecord.user_id == uid,
             IPContentDraftRecord.task == "moments_candidate",
+            IPContentDraftRecord.created_at >= datetime.utcnow() - timedelta(minutes=5),
         )
         .order_by(IPContentDraftRecord.created_at.desc())
         .limit(limit)
@@ -222,7 +223,7 @@ def _collect_inflight(db: Session, owner: User, *, limit: int) -> list[dict[str,
         )
 
     # 公众号：客户端同步进来的进行中文章（source 可自定义，kind=article/wechat_article）
-    cutoff = datetime.utcnow() - timedelta(minutes=15)
+    cutoff = datetime.utcnow() - timedelta(minutes=5)
     rows = (
         db.query(UserContentRecord)
         .filter(
@@ -767,7 +768,7 @@ def sync_content_records(
 
 def _expire_stale_inflight_records(db: Session, user_id: int) -> None:
     """把超过 15 分钟还在 running 的临时记录软删除，避免作品页一直显示生成中。"""
-    cutoff = datetime.utcnow() - timedelta(minutes=15)
+    cutoff = datetime.utcnow() - timedelta(minutes=5)
     rows = (
         db.query(UserContentRecord)
         .filter(
@@ -802,6 +803,42 @@ def list_inflight_content_records(
         items = [item for item in items if item.get("kind") == wanted]
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"ok": True, "items": items[:limit], "next_poll_seconds": 10}
+
+
+@router.post("/api/content-records/inflight/cleanup", summary="Clear my stuck in-flight records")
+def cleanup_inflight_content_records(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    owner = online_user_for_mobile_user(db, current_user)
+    uid = int(owner.id)
+    statuses = ("running", "queued", "processing", "pending")
+    rows = (
+        db.query(UserContentRecord)
+        .filter(
+            UserContentRecord.user_id == uid,
+            func.lower(UserContentRecord.status).in_(statuses),
+        )
+        .all()
+    )
+    for row in rows:
+        row.status = "deleted"
+    drafts = (
+        db.query(IPContentDraftRecord)
+        .filter(IPContentDraftRecord.user_id == uid, IPContentDraftRecord.task == "moments_candidate")
+        .all()
+    )
+    cleared_drafts = 0
+    for row in drafts:
+        meta = dict(row.meta or {}) if isinstance(row.meta, dict) else {}
+        image_status = _clean_text(meta.get("image_status"), 32).lower()
+        if image_status in {"queued", "pending", "running", "processing"}:
+            meta["image_status"] = "failed"
+            meta["image_error"] = "用户清理生成中记录"
+            row.meta = meta
+            cleared_drafts += 1
+    db.commit()
+    return {"ok": True, "cleared": len(rows), "cleared_drafts": cleared_drafts}
 
 
 @router.get("/api/content-records", summary="List shared Online and IP daily content")

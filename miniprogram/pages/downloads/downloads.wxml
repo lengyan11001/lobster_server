@@ -27,7 +27,10 @@
   </view>
 
   <block wx:else>
-    <view wx:if="{{loading && items.length === 0}}" class="skeleton">
+    <view wx:if="{{pendingCount > 0}}" class="inflight-bar">
+      <text class="inflight-num">有 {{pendingCount}} 条生成中记录</text>
+      <text class="inflight-clean" bindtap="cleanupInflight">清理失效生成中</text>
+    </view>    <view wx:if="{{loading && items.length === 0}}" class="skeleton">
       <view wx:for="{{skeletons}}" wx:key="*this" class="sk-row">
         <view class="sk-thumb"></view>
         <view class="sk-lines">
@@ -86,9 +89,9 @@
       </view>
 
       <scroll-view class="sheet-body" scroll-y>
-        <video wx:if="{{detail.videoUrl}}" class="sheet-video" src="{{detail.videoUrl}}" controls object-fit="contain"></video>
-        <image wx:for="{{detail.images}}" wx:key="*this" class="sheet-image" src="{{item}}" mode="widthFix" data-url="{{item}}" bindtap="previewImage" />
         <text wx:if="{{detail.content}}" class="sheet-content" user-select="{{true}}">{{detail.content}}</text>
+        <video wx:if="{{detail.videoUrl}}" class="sheet-video" src="{{detail.videoUrl}}" controls object-fit="contain"></video>
+        <image wx:for="{{detail.images}}" wx:key="*this" class="sheet-image" src="{{item}}" mode="widthFix" data-url="{{item}}" bindtap="previewImage" binderror="onSheetImageError" />
       </scroll-view>
 
       <text wx:if="{{!detail.content && !detail.images.length && !detail.videoUrl}}" class="sheet-empty">这条记录没有保存正文，可能是在旧版本生成的。</text>

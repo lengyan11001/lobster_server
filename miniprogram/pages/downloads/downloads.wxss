@@ -143,3 +143,6 @@ page { background: #f8f9fa; color: #0f172a; }
 
 .sheet-empty { display: block; padding: 30rpx 0; text-align: center; color: #94a3b8; font-size: 24rpx; }
 .sheet-draft { width: 100%; flex: none; margin: 24rpx 0 0; }
+.inflight-bar { display: flex; align-items: center; justify-content: space-between; margin: 12rpx 0 18rpx; padding: 16rpx 20rpx; border-radius: 16rpx; background: #fff7ed; color: #9a3412; font-size: 23rpx; }
+.inflight-clean { color: #c2410c; font-weight: 600; padding-left: 16rpx; white-space: nowrap; }
+.sheet-content { margin-top: 4rpx; }

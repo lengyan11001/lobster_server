@@ -732,3 +732,37 @@ def test_stale_running_record_is_soft_deleted(db_session, test_user):
     assert "moments-stale-1" not in ids
     stale = db_session.query(UserContentRecord).filter_by(source_id="moments-stale-1").one()
     assert stale.status == "deleted"
+
+def test_cleanup_inflight_clears_stuck_records(db_session, test_user):
+    from backend.app.api.content_records import cleanup_inflight_content_records
+
+    now = datetime.utcnow()
+    db_session.add(UserContentRecord(
+        user_id=test_user.id,
+        source="online_wechat_article",
+        source_id="article-stuck-1",
+        kind="article",
+        title="卡住的文章",
+        status="running",
+        source_created_at=now,
+        created_at=now,
+        updated_at=now,
+    ))
+    db_session.add(IPContentDraftRecord(
+        record_id="moments-stuck-1",
+        user_id=test_user.id,
+        task="moments_candidate",
+        platform="wechat_moments",
+        title="卡住的朋友圈",
+        meta={"image_status": "processing", "image_progress": "1/3"},
+        created_at=now,
+        updated_at=now,
+    ))
+    db_session.commit()
+
+    result = cleanup_inflight_content_records(current_user=test_user, db=db_session)
+    assert result["cleared"] == 1
+    assert result["cleared_drafts"] == 1
+    assert db_session.query(UserContentRecord).filter_by(source_id="article-stuck-1").one().status == "deleted"
+    draft = db_session.query(IPContentDraftRecord).filter_by(record_id="moments-stuck-1").one()
+    assert draft.meta["image_status"] == "failed"
