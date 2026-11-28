@@ -559,7 +559,14 @@ def _require_release_approval(zip_path: str, approved_version: str, *, write_led
 
 
 def _gui_release_confirm(action: str = "发布", summary: str = "") -> None:
-    """GUI 人工闸门：必须有人在弹窗里输入随机码才继续（环境变量无法替代）。"""
+    """GUI 人工闸门：默认必须有人在弹窗里输入随机码才继续。
+
+    用户在会话里明确说「直接发/不用再确认」时，可用
+    LOBSTER_RELEASE_CONFIRM=skip 跳过一次，避免反复弹窗打断。
+    """
+    if str(os.environ.get("LOBSTER_RELEASE_CONFIRM") or "").strip().lower() in {"skip", "1", "true", "yes"}:
+        print("[confirm] 已按用户要求跳过人工确认窗（LOBSTER_RELEASE_CONFIRM=skip）")
+        return
     import subprocess as _sp
     from pathlib import Path as _Path
 
