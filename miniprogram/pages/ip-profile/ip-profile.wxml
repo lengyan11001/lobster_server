@@ -14,12 +14,11 @@
 
   <view class="section">
     <view class="sec-head">
-      <text class="sec-title">个人记忆</text>
-      <text class="sec-sub">产品资料、案例、常见问答</text>
+      <text class="sec-title">上传文件</text>
+      <text class="sec-sub">个人资料，产品资料，企业资料等</text>
     </view>
     <view class="btn-row">
-      <button class="primary small" bindtap="addMemoryText">新增文本</button>
-      <button class="ghost small" bindtap="uploadMemory">上传文件</button>
+      <button class="primary small" bindtap="uploadMemory">上传文件</button>
     </view>
     <view wx:if="{{memoryLoading}}" class="empty">加载中…</view>
     <view wx:elif="{{!memoryDocs.length}}" class="empty">还没有个人记忆文件</view>
