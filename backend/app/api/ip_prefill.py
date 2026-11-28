@@ -522,3 +522,36 @@ def delete_prefill_record(
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+class KeywordSuggestBody(BaseModel):
+    keyword: str = Field(min_length=1, max_length=60)
+
+
+@router.post("/api/ip-content/keywords/suggest", summary="根据关键词让 AI 给出相关关键词")
+async def suggest_keywords(
+    body: KeywordSuggestBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    seed = _clean(body.keyword, 60)
+    if not seed:
+        raise HTTPException(status_code=400, detail="请先输入关键词")
+    current_user = online_user_for_mobile_user(db, current_user)
+    owner = _owner_user(db, current_user)
+    try:
+        token = create_access_token(access_token_claims(owner))
+    except Exception:
+        token = ""
+    system_prompt = (
+        "你是中文短视频选题助手。根据用户给的一个关键词，给出 6-8 个相关、可直接用于搜索和选题的关键词。"
+        '只输出严格 JSON：{"keywords":["..."]}。'
+        "要求：每个 2-12 个字；包含同义词、使用场景、人群、痛点等角度；不要编号、不要解释、不要重复原词。"
+    )
+    parsed = await _llm_json(system_prompt, "关键词：" + seed, token, "", temperature=0.7, timeout=90.0)
+    items: list[str] = []
+    for raw in (parsed.get("keywords") or []):
+        word = _clean(raw, 20)
+        if word and word != seed and word not in items:
+            items.append(word)
+    return {"ok": True, "keyword": seed, "items": items[:8]}

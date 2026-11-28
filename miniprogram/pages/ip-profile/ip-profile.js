@@ -42,6 +42,14 @@ Page({
   data: {
     tabs: TABS,
     tabIndex: 0,
+    profileFields: [],
+    profileName: "",
+    profileSaving: false,
+    keywordModalOpen: false,
+    keywordInput: "",
+    keywordSuggesting: false,
+    keywordSaving: false,
+    suggestItems: [],
     loading: true,
     surveys: [],
     currentSurveyId: 0,
@@ -62,9 +70,22 @@ Page({
     currentTemplateId: 0
   },
 
+  onLoad() {
+    this.setData({ profileFields: FIELD_DEFS.map((def) => Object.assign({}, def, { value: "" })) });
+  },
+
   onShow() {
     this.loadInstallationId();
-    this.reloadCurrent();
+    this.loadAll();
+  },
+
+  loadAll() {
+    return Promise.all([
+      this.loadProfile(),
+      this.loadMemory(),
+      this.loadKeywords(),
+      this.loadCompetitors()
+    ]);
   },
 
   loadInstallationId() {
@@ -83,21 +104,8 @@ Page({
   iidHeader() {
     return this.installationId ? { "X-Installation-Id": this.installationId } : {};
   },
-  onPullDownRefresh() { this.reloadCurrent().then(() => wx.stopPullDownRefresh()).catch(() => wx.stopPullDownRefresh()); },
-
-  reloadCurrent() {
-    const index = this.data.tabIndex;
-    if (index === 0) return this.loadProfile();
-    if (index === 1) return this.loadMemory();
-    if (index === 2) return this.loadKeywords();
-    if (index === 3) return this.loadCompetitors();
-    return this.loadTemplates();
-  },
-
-  switchTab(e) {
-    const index = Number(e.currentTarget.dataset.index || 0);
-    this.setData({ tabIndex: index, editorVisible: false });
-    this.reloadCurrent();
+  onPullDownRefresh() {
+    this.loadAll().then(() => wx.stopPullDownRefresh()).catch(() => wx.stopPullDownRefresh());
   },
   loadProfile() {
     this.setData({ loading: true });
@@ -122,7 +130,14 @@ Page({
           this._surveys = rows;
           this.setData({ surveys: rows.map((row) => ({ id: row.id, name: row.name, time: row.time })) });
         }
-        this.setData({ currentSurveyId });
+        const surveys = this._surveys || [];
+        const current = surveys.find((row) => Number(row.id) === Number(currentSurveyId));
+        const requirements = current ? current.requirements : ((item && item.requirements) || {});
+        this.setData({
+          currentSurveyId,
+          profileName: current ? current.name : "个人资料",
+          profileFields: this.fieldsFromRequirements(requirements)
+        });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => this.setData({ loading: false }));
@@ -142,6 +157,45 @@ Page({
       }
       return Object.assign({}, def, { value: String(value || "") });
     });
+  },
+
+  onProfileField(e) {
+    const key = e.currentTarget.dataset.key;
+    const value = e.detail.value || "";
+    const profileFields = this.data.profileFields.map((item) => item.key === key ? Object.assign({}, item, { value }) : item);
+    this.setData({ profileFields });
+  },
+
+  saveProfileInline() {
+    if (this.data.profileSaving) return;
+    if (!app.globalData.token) return wx.showToast({ title: "请先登录", icon: "none" });
+    const requirements = this.collectRequirements(this.data.profileFields);
+    const editingId = Number(this.data.currentSurveyId || 0) || 0;
+    const name = String(this.data.profileName || "").trim() || "个人资料";
+    const header = this.iidHeader();
+    const body = { name, requirements, meta: { source: "online_personal_profile" } };
+    this.setData({ profileSaving: true });
+    const saveRequest = editingId
+      ? app.request({ method: "PATCH", url: "/api/ip-content/profile-surveys/" + editingId, header, data: body, timeout: 60000 })
+      : app.request({ method: "POST", url: "/api/ip-content/profile-surveys", header, data: body, timeout: 60000 });
+    saveRequest
+      .then((data) => {
+        const item = (data && data.item) || {};
+        const savedId = Number(item.id || editingId || 0) || 0;
+        return this.syncDefaultSurvey(savedId, requirements)
+          .then(() => {
+            this.setData({ profileSaving: false, currentSurveyId: savedId });
+            wx.showToast({ title: "已保存", icon: "success" });
+          })
+          .catch(() => {
+            this.setData({ profileSaving: false, currentSurveyId: savedId });
+            wx.showToast({ title: "已保存，同步默认配置失败", icon: "none" });
+          });
+      })
+      .catch((err) => {
+        this.setData({ profileSaving: false });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
   },
 
   newSurvey() {
@@ -430,18 +484,65 @@ Page({
       .then(() => this.setData({ keywordLoading: false }));
   },
 
-  addKeyword() {
-    askInput("新增关键词", "例如：小户型收纳").then((text) => {
-      if (!text) return;
-      wx.showLoading({ title: "保存中" });
-      app.request({ method: "POST", url: "/api/ip-content/keywords", data: { keyword: text, display_name: text }, timeout: 30000 })
-        .then(() => {
-          wx.showToast({ title: "已添加", icon: "success" });
-          this.loadKeywords();
-        })
-        .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-        .then(() => wx.hideLoading());
-    });
+  openKeywordModal() {
+    this.setData({ keywordModalOpen: true, keywordInput: "", suggestItems: [], keywordSuggesting: false, keywordSaving: false });
+  },
+
+  closeKeywordModal() {
+    this.setData({ keywordModalOpen: false });
+  },
+
+  onKeywordInput(e) {
+    this.setData({ keywordInput: e.detail.value || "" });
+  },
+
+  suggestKeywords() {
+    const seed = String(this.data.keywordInput || "").trim();
+    if (!seed) return wx.showToast({ title: "先输入关键词", icon: "none" });
+    if (this.data.keywordSuggesting) return;
+    this.setData({ keywordSuggesting: true });
+    app.request({ method: "POST", url: "/api/ip-content/keywords/suggest", data: { keyword: seed }, timeout: 120000 })
+      .then((data) => {
+        const items = [{ text: seed, checked: true }];
+        ((data && data.items) || []).forEach((raw) => {
+          const text = String(raw || "").trim();
+          if (text && !items.some((row) => row.text === text)) items.push({ text, checked: false });
+        });
+        this.setData({ suggestItems: items });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err) || "推荐失败", icon: "none" }))
+      .then(() => this.setData({ keywordSuggesting: false }));
+  },
+
+  toggleSuggest(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const suggestItems = this.data.suggestItems.map((row, idx) => idx === index ? Object.assign({}, row, { checked: !row.checked }) : row);
+    this.setData({ suggestItems });
+  },
+
+  confirmKeywords() {
+    if (this.data.keywordSaving) return;
+    const picked = (this.data.suggestItems || []).filter((row) => row.checked).map((row) => row.text);
+    if (!picked.length) return wx.showToast({ title: "至少选一个关键词", icon: "none" });
+    const existing = new Set((this.data.keywords || []).map((row) => row.keyword));
+    const todo = picked.filter((text) => !existing.has(text));
+    if (!todo.length) {
+      this.setData({ keywordModalOpen: false });
+      return wx.showToast({ title: "这些关键词已存在", icon: "none" });
+    }
+    this.setData({ keywordSaving: true });
+    Promise.all(todo.map((text) => app.request({
+      method: "POST",
+      url: "/api/ip-content/keywords",
+      data: { keyword: text, display_name: text },
+      timeout: 30000
+    }).catch(() => null)))
+      .then(() => {
+        this.setData({ keywordSaving: false, keywordModalOpen: false });
+        wx.showToast({ title: "已添加 " + todo.length + " 个关键词", icon: "success" });
+        this.loadKeywords();
+      })
+      .catch(() => this.setData({ keywordSaving: false }));
   },
 
   keywordMenu(e) {
