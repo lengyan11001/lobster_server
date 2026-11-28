@@ -1,4 +1,4 @@
-<view class="tabbar">
+<view wx:if="{{show}}" class="tabbar">
   <view wx:for="{{list}}" wx:key="text" class="tab {{selected === index ? 'active' : ''}}" data-index="{{index}}" bindtap="onTap">
     <view wx:if="{{selected === index}}" class="indicator"></view>
     <image class="icon" src="{{selected === index ? item.activeIcon : item.icon}}" />

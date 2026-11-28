@@ -77,7 +77,7 @@ Page({
 
   onShow() {
     if (typeof this.getTabBar === "function" && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 2 });
+      this.getTabBar().setData({ selected: 2, show: true });
     }
     app.restoreSession();
     this.setData({ phoneBound: Boolean(app.globalData.token && app.globalData.phone) });
@@ -85,9 +85,9 @@ Page({
     this.startInflightTimer();
   },
 
-  onHide() { this.stopInflightTimer(); },
+  onHide() { this.stopInflightTimer(); this.setTabBarVisible(true); },
 
-  onUnload() { this.stopInflightTimer(); },
+  onUnload() { this.stopInflightTimer(); this.setTabBarVisible(true); },
 
   onPullDownRefresh() {
     this.setData({ phoneBound: Boolean(app.globalData.token && app.globalData.phone) });
@@ -301,6 +301,7 @@ Page({
     const index = Number(e.currentTarget.dataset.index || 0);
     const row = this.data.items[index];
     if (!row || row.pending) return;
+    this.setTabBarVisible(false);
     wx.showLoading({ title: "加载中", mask: true });
     app.request({
       url: "/api/content-records/detail?source=" + encodeURIComponent(row.source) +
@@ -350,7 +351,10 @@ Page({
           }
         });
       })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .catch((err) => {
+        this.setTabBarVisible(true);
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      })
       .then(() => wx.hideLoading());
   },
 
@@ -428,7 +432,14 @@ Page({
       }
     });
   },
+  setTabBarVisible(visible) {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ show: !!visible });
+    }
+  },
+
   closeDetail() {
+    this.setTabBarVisible(true);
     this.setData({ detail: null });
   },
 
@@ -490,6 +501,7 @@ Page({
           timeout: 30000
         })
           .then(() => {
+            this.setTabBarVisible(true);
             this.setData({ detail: null });
             wx.showToast({ title: "已删除", icon: "success" });
             this.refresh();

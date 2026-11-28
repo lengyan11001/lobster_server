@@ -1,6 +1,7 @@
 Component({
   data: {
     selected: 0,
+    show: true,
     list: [
       { pagePath: "/pages/index/index", text: "首页", icon: "/assets/tab2/home_off.png", activeIcon: "/assets/tab2/home_on.png" },
       { pagePath: "/pages/assets/assets", text: "素材库", icon: "/assets/tab2/assets_off.png", activeIcon: "/assets/tab2/assets_on.png" },
