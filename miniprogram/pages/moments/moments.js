@@ -11,6 +11,7 @@ function fmtTime(v) { return formatDateTime(v, true); }
 
 Page({
   data: {
+    step: 1,
     groups: [],
     loading: false,
     viewMode: "list",
@@ -89,12 +90,23 @@ Page({
   },
 
   openCreate() {
-    this.setData({ viewMode: "create", topic: "", copyRequirement: "", copyCount: 1, generating: false });
+    this.setData({ viewMode: "create", step: 1, topic: "", copyRequirement: "", copyCount: 1, generating: false });
   },
 
   backToList() {
     this.setData({ viewMode: "list" });
     this.load();
+  },
+
+  nextStep() {
+    if (!String(this.data.topic || "").trim()) return wx.showToast({ title: "请先填写主题或标题", icon: "none" });
+    this.setData({ step: 2 });
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
+  },
+
+  prevStep() {
+    this.setData({ step: 1 });
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
   },
 
   openTopicRecommend() { wx.navigateTo({ url: "/pages/topic-recommend?target=moments" }); },

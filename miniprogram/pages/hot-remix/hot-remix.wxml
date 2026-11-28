@@ -39,9 +39,11 @@
     </view>
 
     <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
+    </block>
   </block>
 
   <block wx:else>
+    <block wx:if="{{step === 1}}">
     <view class="card">
       <text class="card-title">1. 原视频</text>
       <view class="video-row">
@@ -71,6 +73,12 @@
       </view>
     </view>
 
+    <view class="btn-row">
+      <button class="primary" bindtap="nextStep">下一步</button>
+    </view>
+    </block>
+
+    <block wx:if="{{step === 2}}">
     <view class="card">
       <text class="card-title">3. 参数</text>
       <view class="param">
@@ -97,7 +105,10 @@
       <input class="input" value="{{title}}" bindinput="onTitle" placeholder="作品标题" maxlength="60" />
     </view>
 
-    <button class="primary" loading="{{submitting}}" bindtap="submit">开始跟创</button>
+    <view class="btn-row">
+      <button class="ghost" bindtap="prevStep">上一步</button>
+      <button class="primary" loading="{{submitting}}" bindtap="submit">开始跟创</button>
+    </view>
     <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
   </block>
   <view wx:if="{{previewOpen}}" class="preview-mask" catchtap="closePreview">

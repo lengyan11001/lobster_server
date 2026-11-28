@@ -8,13 +8,24 @@
     </view>
   </view>
 
+  <block wx:if="{{step === 1}}">
+  <view class="panel step1-panel">
+    <text class="label">文章主题</text>
+    <textarea class="textarea step1-textarea" value="{{topic}}" bindinput="onTopicInput" placeholder="例如：小户型收纳的三个反常识" maxlength="200" />
     <view class="quick-actions">
       <button class="quick-btn primary" bindtap="openMemory">IP记忆生成</button>
       <button class="quick-btn primary" bindtap="openRecording">录音生成</button>
       <button class="quick-btn ghost" bindtap="openPeerLink">同行链接</button>
       <button class="quick-btn ghost" bindtap="openPrefillHistory">历史</button>
     </view>
+    <view class="btn-row">
+      <button class="primary" bindtap="nextStep">下一步</button>
+    </view>
+    <text class="hint">下一步再设置复刻链接、目标读者、要点和风格</text>
+  </view>
+  </block>
 
+  <block wx:if="{{step === 2}}">
   <view class="panel">
     <text class="label">复刻公众号文章（可选）</text>
     <input class="input" value="{{sourceUrl}}" bindinput="onSourceUrl" placeholder="粘贴 mp.weixin.qq.com/s/... 文章链接" />
@@ -23,8 +34,6 @@
   </view>
 
   <view class="panel">
-    <text class="label">文章主题</text>
-    <input class="input" value="{{topic}}" bindinput="onTopicInput" placeholder="例如：小户型收纳的三个反常识" />
     <text class="label">目标读者（可选）</text>
     <input class="input" value="{{audience}}" bindinput="onAudienceInput" placeholder="例如：中小企业老板、门店经营者" />
     <text class="label">要点 / 素材（可选）</text>
@@ -35,8 +44,12 @@
         <view wx:for="{{tones}}" wx:key="*this" class="chip {{tone === item ? 'active' : ''}}" data-value="{{item}}" bindtap="setTone">{{item}}</view>
       </view>
     </view>
-    <button class="primary" loading="{{loading}}" disabled="{{loading}}" bindtap="generate">{{rewriteMode ? '复刻改写并生成' : '生成公众号文案'}}</button>
+    <view class="btn-row">
+      <button class="ghost" bindtap="prevStep">上一步</button>
+      <button class="primary" loading="{{loading}}" disabled="{{loading}}" bindtap="generate">{{rewriteMode ? '复刻改写并生成' : '生成公众号文案'}}</button>
+    </view>
   </view>
+  </block>
 
   <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>
 

@@ -34,6 +34,7 @@ function mapRows(data) {
 
 Page({
   data: {
+    step: 1,
     viewMode: "list",
     jobList: [],
     jobsLoading: false,
@@ -91,7 +92,20 @@ Page({
   goBack() { wx.navigateBack({ fail: () => wx.switchTab({ url: "/pages/index/index" }) }); },
 
   openCreate() {
-    this.setData({ viewMode: "create", statusText: "", resultUrl: "", resultTitle: "" });
+    this.setData({ viewMode: "create", step: 1, statusText: "", resultUrl: "", resultTitle: "" });
+  },
+
+  nextStep() {
+    if (!String(this.data.videoUrl || "").trim() && !String(this.data.shareText || "").trim()) {
+      return wx.showToast({ title: "请先上传原视频或粘贴链接", icon: "none" });
+    }
+    this.setData({ step: 2 });
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
+  },
+
+  prevStep() {
+    this.setData({ step: 1 });
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
   },
 
   backToList() {

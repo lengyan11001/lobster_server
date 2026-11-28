@@ -4,6 +4,7 @@ const hist = require("../../utils/gen-history");
 
 Page({
   data: {
+    step: 1,
     topic: "", points: "", audience: "", tone: "专业观点",
     tones: ["专业观点", "简洁商业", "故事叙事", "实用教程"],
     loading: false, progressText: "",
@@ -51,6 +52,19 @@ Page({
       points: text.slice(0, 800)
     });
     wx.showToast({ title: "已填入选题", icon: "none" });
+  },
+
+  nextStep() {
+    if (!String(this.data.topic || "").trim() && !String(this.data.sourceUrl || "").trim()) {
+      return wx.showToast({ title: "先填文章主题或粘贴公众号链接", icon: "none" });
+    }
+    this.setData({ step: 2 });
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
+  },
+
+  prevStep() {
+    this.setData({ step: 1 });
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
   },
 
   onSourceUrl(e) { this.setData({ sourceUrl: e.detail.value }); },
