@@ -136,6 +136,8 @@ function dataUriToTempFile(dataUri) {
 Page({
   data: {
     phoneBound: false, maskedPhone: "", errText: "",
+    peerOpen: false, peerLink: "", peerText: "", peerBusy: false, peerProgressText: "",
+    peerScript: "", peerTitleDraft: "", peerScriptBusy: false,
     profiles: [], profileIndex: -1, profilesLoading: false,
     voices: [], voiceNames: [], voiceIndex: -1, voicesLoading: false,
     trainOpen: false, trainMode: "image", trainFileName: "", trainFile: "",
@@ -308,6 +310,94 @@ Page({
   openPrefillHistory() {
     const drawer = this.selectComponent("#topicPrefill");
     if (drawer) drawer.openHistory();
+  },
+
+  openPeer() {
+    this.setData({
+      peerOpen: true, peerLink: "", peerText: "", peerBusy: false, peerProgressText: "",
+      peerScript: "", peerTitleDraft: "", peerScriptBusy: false
+    });
+  },
+
+  closePeer() {
+    if (this.peerPoller) { this.peerPoller.stop(); this.peerPoller = null; }
+    this.setData({ peerOpen: false, peerBusy: false, peerScriptBusy: false, peerProgressText: "" });
+  },
+
+  noopPeer() {},
+
+  onPeerLink(e) { this.setData({ peerLink: e.detail.value }); },
+
+  parsePeer() {
+    const link = String(this.data.peerLink || "").trim();
+    if (!link) return wx.showToast({ title: "先粘贴同行链接", icon: "none" });
+    if (!app.globalData.token) return wx.showToast({ title: "请先登录", icon: "none" });
+    this.setData({ peerBusy: true, peerText: "", peerScript: "", peerTitleDraft: "", peerProgressText: "正在解析链接…" });
+    app.request({ method: "POST", url: "/api/digital-human/peer-jobs", data: { url: link }, timeout: 30000 })
+      .then((data) => {
+        const jobId = String((data && data.job_id) || "");
+        if (!jobId) throw new Error("没有返回任务号");
+        this.setData({ peerProgressText: "正在下载音频并转写…" });
+        this.startPeerPolling(jobId);
+      })
+      .catch((err) => {
+        this.setData({ peerBusy: false, peerProgressText: "" });
+        wx.showToast({ title: api.errorMessage(err) || "解析失败", icon: "none" });
+      });
+  },
+
+  startPeerPolling(jobId) {
+    if (this.peerPoller) this.peerPoller.stop();
+    this.peerPoller = createPoller(
+      () => app.request({ url: "/api/digital-human/peer-jobs/" + encodeURIComponent(jobId), timeout: 30000 }),
+      (data) => {
+        const status = String((data && data.status) || "");
+        if (status === "completed") {
+          this.setData({ peerText: String((data && data.transcript) || ""), peerBusy: false, peerProgressText: "" });
+          wx.showToast({ title: "转写完成", icon: "success" });
+          return true;
+        }
+        if (status === "failed") {
+          this.setData({ peerBusy: false, peerProgressText: "" });
+          wx.showToast({ title: String((data && data.error) || "解析失败").slice(0, 40), icon: "none" });
+          return true;
+        }
+        this.setData({ peerProgressText: String((data && data.stage) || "") === "transcribing" ? "正在转写音频…" : "正在解析链接…" });
+        return false;
+      },
+      () => {}
+    );
+    this.peerPoller.start(true);
+  },
+
+  copyPeerText() {
+    const text = String(this.data.peerText || "").trim();
+    if (!text) return;
+    wx.setClipboardData({ data: text, success: () => wx.showToast({ title: "已复制", icon: "success" }) });
+  },
+
+  writePeerScript() {
+    const transcript = String(this.data.peerText || "").trim();
+    if (!transcript || this.data.peerScriptBusy) return;
+    this.setData({ peerScriptBusy: true });
+    app.request({ method: "POST", url: "/api/digital-human/peer-script", data: { transcript }, timeout: 180000 })
+      .then((data) => {
+        this.setData({
+          peerTitleDraft: String((data && data.title) || ""),
+          peerScript: String((data && data.script) || "")
+        });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err) || "生成失败", icon: "none" }))
+      .then(() => this.setData({ peerScriptBusy: false }));
+  },
+
+  applyPeerScript() {
+    const script = String(this.data.peerScript || "").trim();
+    if (!script) return;
+    const videoTitle = String(this.data.peerTitleDraft || "").trim();
+    if (this.peerPoller) { this.peerPoller.stop(); this.peerPoller = null; }
+    this.setData({ text: script, videoTitle, peerOpen: false, peerBusy: false, peerProgressText: "" });
+    wx.showToast({ title: "已填入文案", icon: "success" });
   },
 
   openMemoryPrefill() {
@@ -529,6 +619,7 @@ Page({
 
   onUnload() {
     if (this.digitalPoller) this.digitalPoller.stop();
+    if (this.peerPoller) { this.peerPoller.stop(); this.peerPoller = null; }
     if (this.extractTimer) { clearInterval(this.extractTimer); this.extractTimer = null; }
     if (this.trainTimer) clearInterval(this.trainTimer);
     if (this.cloneTimer) clearInterval(this.cloneTimer);

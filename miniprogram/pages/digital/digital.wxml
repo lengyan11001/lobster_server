@@ -13,6 +13,7 @@
     <view wx:if="{{viewMode === 'create'}}" class="head-actions">
       <button class="ghost small" bindtap="openMemoryPrefill">IP记忆生成</button>
       <button class="ghost small" bindtap="openRecordingPrefill">录音生成</button>
+      <button class="ghost small" bindtap="openPeer">同行链接</button>
       <button class="ghost small" bindtap="openPrefillHistory">历史</button>
     </view>
   </view>
@@ -258,6 +259,34 @@
       <text class="video-preview-download" bindtap="downloadPreview">下载</text>
     </view>
     <video class="video-preview-body" src="{{previewUrl}}" controls autoplay object-fit="contain"></video>
+  </view>
+</view>
+
+<view wx:if="{{peerOpen}}" class="peer-mask" catchtap="closePeer">
+  <view class="peer-panel" catchtap="noopPeer">
+    <view class="peer-head">
+      <text class="peer-title">同行链接</text>
+      <text class="peer-close" bindtap="closePeer">×</text>
+    </view>
+    <text class="label">同行链接</text>
+    <textarea class="input small" value="{{peerLink}}" bindinput="onPeerLink" placeholder="粘贴作品链接或分享文案（带链接的整段也行）" auto-height maxlength="2000" />
+    <button class="ghost" loading="{{peerBusy}}" disabled="{{peerBusy}}" bindtap="parsePeer">{{peerBusy ? '解析转写中…' : '解析并转写'}}</button>
+    <text wx:if="{{peerProgressText}}" class="peer-progress">{{peerProgressText}}</text>
+    <block wx:if="{{peerText}}">
+      <text class="label">转写文本</text>
+      <scroll-view scroll-y class="peer-text-box"><text class="peer-text">{{peerText}}</text></scroll-view>
+      <view class="peer-actions">
+        <button class="ghost mini" bindtap="copyPeerText">复制</button>
+        <button class="ghost mini" loading="{{peerScriptBusy}}" disabled="{{peerScriptBusy}}" bindtap="writePeerScript">转写</button>
+      </view>
+    </block>
+    <block wx:if="{{peerScript}}">
+      <text class="label">标题</text>
+      <view class="peer-script-title">{{peerTitleDraft}}</view>
+      <text class="label">口播文案</text>
+      <scroll-view scroll-y class="peer-text-box"><text class="peer-text">{{peerScript}}</text></scroll-view>
+      <button class="primary" bindtap="applyPeerScript">确认填充</button>
+    </block>
   </view>
 </view>
 
